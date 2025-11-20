@@ -7,13 +7,11 @@ import os
 import pandas as pd
 import tempfile
 import shutil
-import smtplib
 import threading
 import uuid
 import zipfile
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from email.mime.text import MIMEText
-from email.mime.multipart import MIMEMultipart
+from mailjet_rest import Client
 from flask import Flask, render_template, request, send_file, jsonify, session, redirect, url_for
 from werkzeug.utils import secure_filename
 from config import ReconciliationConfig
@@ -56,18 +54,19 @@ batch_jobs = {}  # {job_id: {status, progress, results, error}}
 processing_state = {}  # {session_id: {status, current_index, total, transactions}}
 processing_lock = threading.Lock()  # Thread-safe access to processing_state
 
-# Email configuration - with environment variable override
-SMTP_HOST = os.environ.get("SMTP_HOST", "smtp.mailjet.com")
-SMTP_PORT = int(os.environ.get("SMTP_PORT", 587))
-SMTP_USER = os.environ.get("SMTP_USER", "770477fa4a7c9c7c8aac64807c3c69ce")
-SMTP_PASS = os.environ.get("SMTP_PASS", "81a49ef6dc5e97dbe4cd67fc95a74fa7")
+# Mailjet API configuration - using REST API instead of SMTP
+MAILJET_API_KEY = os.environ.get("MAILJET_API_KEY", "770477fa4a7c9c7c8aac64807c3c69ce")
+MAILJET_API_SECRET = os.environ.get("MAILJET_API_SECRET", "81a49ef6dc5e97dbe4cd67fc95a74fa7")
 EMAIL_SENDER = os.environ.get("EMAIL_SENDER", "akshit.mahajan713@gmail.com")
 EMAIL_RECIPIENT = os.environ.get("EMAIL_RECIPIENT", "akshit.mahajan0703@gmail.com")
 EMAIL_ENABLED = os.environ.get("EMAIL_ENABLED", "true").lower() == "true"
 
+# Initialize Mailjet client
+mailjet_client = Client(auth=(MAILJET_API_KEY, MAILJET_API_SECRET), version='v3.1') if EMAIL_ENABLED else None
+
 def send_reconciliation_alert(report, transaction_name=""):
     """
-    Send email alert when Amount Reconciled falls below 95%
+    Send email alert using Mailjet REST API when Amount Reconciled falls below 95%
 
     Args:
         report: Report context with reconciliation metrics
@@ -78,7 +77,7 @@ def send_reconciliation_alert(report, transaction_name=""):
     """
     try:
         # Check if email is enabled
-        if not EMAIL_ENABLED:
+        if not EMAIL_ENABLED or not mailjet_client:
             print("📧 Email alerts disabled - skipping")
             return False
 
@@ -94,7 +93,7 @@ def send_reconciliation_alert(report, transaction_name=""):
         subject = f"⚠️ Reconciliation Alert{transaction_info}: {amount_reconciled:.2f}%"
 
         # Create detailed email body
-        body = f"""
+        text_content = f"""
 Reconciliation Alert - Low Match Percentage Detected{transaction_info}
 
 CRITICAL METRICS:
@@ -122,28 +121,37 @@ Please review the detailed reconciliation report and investigate discrepancies.
 This is an automated alert from the Card Reconciliation Tool.
 """
 
-        # Create message
-        msg = MIMEMultipart()
-        msg["Subject"] = subject
-        msg["From"] = EMAIL_SENDER
-        msg["To"] = EMAIL_RECIPIENT
-        msg.attach(MIMEText(body, "plain"))
+        # Create Mailjet API request payload
+        data = {
+            'Messages': [
+                {
+                    "From": {
+                        "Email": EMAIL_SENDER,
+                        "Name": "Card Reconciliation Tool"
+                    },
+                    "To": [
+                        {
+                            "Email": EMAIL_RECIPIENT,
+                            "Name": "Reconciliation Team"
+                        }
+                    ],
+                    "Subject": subject,
+                    "TextPart": text_content,
+                }
+            ]
+        }
 
-        # Send email with timeout
-        with smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=30) as server:
-            server.starttls()
-            server.login(SMTP_USER, SMTP_PASS)
-            server.send_message(msg)
+        # Send email via Mailjet REST API
+        result = mailjet_client.send.create(data=data)
 
-        print(f"✅ Alert email sent successfully! Amount Reconciled: {amount_reconciled:.2f}%")
-        return True
+        # Check response
+        if result.status_code == 200:
+            print(f"✅ Alert email sent successfully via Mailjet REST API! Amount Reconciled: {amount_reconciled:.2f}%")
+            return True
+        else:
+            print(f"❌ Mailjet API error: Status {result.status_code}, Response: {result.json()}")
+            return False
 
-    except smtplib.SMTPAuthenticationError as e:
-        print(f"❌ Email authentication failed: {str(e)}")
-        return False
-    except smtplib.SMTPException as e:
-        print(f"❌ SMTP error sending email: {str(e)}")
-        return False
     except Exception as e:
         print(f"❌ Error sending email alert: {str(e)}")
         return False
