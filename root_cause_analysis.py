@@ -85,9 +85,7 @@ class RootCauseAnalyzer:
         # Check if analysis is needed (Amount Reconciled < 95%)
         amount_reconciled = report.get("summary", {}).get("amount_reconciled_percentage", 100)
 
-        # TEMPORARILY DISABLED for faster processing on free tier
-        # Re-enable by changing >= 0 back to >= 95
-        if amount_reconciled >= 0:  # Changed from 95 to 0 (disables AI analysis)
+        if amount_reconciled >= 95:
             return None  # No analysis needed
 
         # Check if OpenAI is available
