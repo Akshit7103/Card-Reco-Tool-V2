@@ -1225,6 +1225,20 @@ def health_check():
         "version": "2.0-config-driven"
     })
 
+@app.route("/test-config")
+def test_config():
+    """Test configuration endpoint - check if environment variables are set"""
+    openai_key_set = bool(os.environ.get("OPENAI_API_KEY"))
+    secret_key_set = bool(app.config.get("SECRET_KEY"))
+
+    return jsonify({
+        "status": "ok",
+        "openai_api_key_configured": openai_key_set,
+        "secret_key_configured": secret_key_set,
+        "python_version": f"Python {'.'.join(map(str, __import__('sys').version_info[:3]))}",
+        "openai_key_length": len(os.environ.get("OPENAI_API_KEY", "")) if openai_key_set else 0
+    })
+
 @app.errorhandler(404)
 def not_found_error(error):
     return render_template("error.html", error="Page not found"), 404
