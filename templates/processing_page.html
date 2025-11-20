@@ -1,0 +1,145 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Processing Transactions</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+    <style>
+        .processing-container {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            min-height: 80vh;
+            padding: 40px;
+        }
+
+        .processing-card {
+            background: white;
+            border-radius: 16px;
+            padding: 60px;
+            box-shadow: 0 10px 40px rgba(0, 0, 0, 0.1);
+            max-width: 600px;
+            text-align: center;
+        }
+
+        .processing-title {
+            font-size: 2rem;
+            color: #1f2937;
+            margin-bottom: 20px;
+            font-weight: 700;
+        }
+
+        .processing-status {
+            font-size: 1.2rem;
+            color: #6b7280;
+            margin-bottom: 40px;
+        }
+
+        .progress-spinner {
+            border: 6px solid #e2e8f0;
+            border-top: 6px solid #007BFF;
+            border-radius: 50%;
+            width: 80px;
+            height: 80px;
+            animation: spin 1s linear infinite;
+            margin: 0 auto 30px;
+        }
+
+        .transaction-status {
+            background: #f8f9fa;
+            padding: 20px;
+            border-radius: 8px;
+            margin-top: 30px;
+        }
+
+        .transaction-item {
+            padding: 10px;
+            margin: 5px 0;
+            border-radius: 4px;
+            font-size: 1rem;
+        }
+
+        .transaction-item.processing {
+            background: #fff3cd;
+            color: #856404;
+        }
+
+        .transaction-item.completed {
+            background: #d4edda;
+            color: #155724;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="processing-container">
+            <div class="processing-card">
+                <div class="progress-spinner"></div>
+                <h1 class="processing-title">Processing Transactions...</h1>
+                <p class="processing-status" id="statusText">Starting batch processing...</p>
+
+                <div class="transaction-status">
+                    <p><strong>Total Transactions:</strong> {{ total_count }}</p>
+                    <p><strong>Processing:</strong> <span id="currentIndex">0</span> / {{ total_count }}</p>
+                    <div id="transactionList"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const totalTransactions = {{ total_count }};
+        let processedCount = 0;
+
+        // Start processing
+        fetch('/execute-batch-processing', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' }
+        })
+        .then(response => response.json())
+        .then(data => {
+            console.log('Processing complete:', data);
+
+            // Show completion message
+            document.getElementById('statusText').textContent = 'Processing complete! Redirecting to results...';
+
+            // Redirect to results after 2 seconds
+            setTimeout(() => {
+                window.location.href = '/transaction-browser';
+            }, 2000);
+        })
+        .catch(error => {
+            console.error('Processing error:', error);
+            document.getElementById('statusText').textContent = 'Error: ' + error.message;
+            document.getElementById('statusText').style.color = '#dc2626';
+        });
+
+        // Poll for progress updates
+        const progressInterval = setInterval(() => {
+            fetch('/batch-processing-status')
+                .then(response => response.json())
+                .then(data => {
+                    if (data.current_index !== undefined) {
+                        processedCount = data.current_index + 1;
+                        document.getElementById('currentIndex').textContent = processedCount;
+
+                        if (data.current_transaction) {
+                            document.getElementById('statusText').textContent =
+                                `Processing: ${data.current_transaction}`;
+                        }
+                    }
+
+                    if (data.status === 'completed') {
+                        clearInterval(progressInterval);
+                    }
+                })
+                .catch(err => console.error('Error fetching progress:', err));
+        }, 1000);
+    </script>
+</body>
+</html>

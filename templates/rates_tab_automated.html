@@ -1,0 +1,445 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Rates File - Automated Batch</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+    <div class="container">
+        <nav class="tab-nav">
+            <a class="tab-link {% if request.endpoint == 'index' %}active{% endif %}" href="{{ url_for('index') }}">Reconciliation Files</a>
+            <a class="tab-link {% if request.endpoint == 'rates_file' or request.endpoint == 'rates_file_automated' %}active{% endif %}" href="{{ url_for('rates_file') }}">Rates File</a>
+        </nav>
+
+        <!-- Sub-tabs for Manual and Automated -->
+        <div class="tab-nav" style="margin-top: 10px; border-top: 2px solid #e2e8f0; padding-top: 10px;">
+            <a class="tab-link {% if request.endpoint == 'rates_file' %}active{% endif %}" href="{{ url_for('rates_file') }}">Manual Upload</a>
+            <a class="tab-link {% if request.endpoint == 'rates_file_automated' %}active{% endif %}" href="{{ url_for('rates_file_automated') }}">Automated Batch</a>
+        </div>
+
+        <h1>Rates File - Automated Batch Processing</h1>
+
+        {% if error_message %}
+            <div class="error-message">
+                <strong>Error:</strong> {{ error_message }}
+            </div>
+        {% endif %}
+
+        <div class="form-section" style="background: #e7f3ff; border-left: 4px solid #007BFF;">
+            <h3>📁 How Automated Batch Processing Works</h3>
+            <p><strong>1.</strong> Create a ZIP file containing your Transactions folder with all subfolders (Transaction 1, Transaction 2, etc.)</p>
+            <p><strong>2.</strong> Upload the ZIP file using the form below</p>
+            <p><strong>3.</strong> The system will extract and scan all transaction subfolders</p>
+            <p><strong>4.</strong> Files in each subfolder are automatically mapped based on filename patterns:</p>
+            <ul style="margin-left: 20px;">
+                <li>Files with "summary" → Summary File <span style="color: #dc3545; font-weight: bold;">(REQUIRED)</span></li>
+                <li>Files with "invoice" → Invoice File</li>
+                <li>Files with "card" and "issuance" → Card Issuance Report</li>
+                <li>Files with "international" → International Transactions</li>
+                <li>Files with "domestic" → Domestic Transactions</li>
+                <li>Files with "vrol" or "dispute" → VROL Report</li>
+            </ul>
+            <p><strong>5.</strong> Browse and select which transactions to process</p>
+            <p><strong>6.</strong> Email alerts are sent for any transaction with Amount Reconciled < 95%</p>
+            <p><strong>7.</strong> View results for each transaction individually</p>
+        </div>
+
+        <div class="rates-form">
+            <form id="uploadForm" enctype="multipart/form-data">
+                <div class="form-section">
+                    <h3>Upload Transaction ZIP File</h3>
+                    <div class="field required">
+                        <label for="transactions_zip">Transactions ZIP File <span class="required">*</span></label>
+                        <input type="file"
+                               id="transactions_zip"
+                               name="transactions_zip"
+                               accept=".zip"
+                               style="width: 100%; padding: 10px; font-size: 14px; border: 2px solid #007BFF; border-radius: 4px;"
+                               required>
+                        <small class="file-hint">
+                            <strong>How to prepare:</strong> Right-click your "Transactions" folder → Send to → Compressed (zipped) folder
+                        </small>
+                    </div>
+                </div>
+
+                <div class="submit-section">
+                    <button type="button" onclick="uploadZipFile()" class="btn-primary" style="padding: 14px 28px; font-size: 16px;">
+                        📤 Process Transactions
+                    </button>
+                </div>
+            </form>
+        </div>
+
+        <!-- Progress Modal -->
+        <div id="progressModal" class="progress-modal" style="display: none;">
+            <div class="progress-modal-content">
+                <div class="progress-modal-header">
+                    <h2>Batch Analysis - Processing</h2>
+                </div>
+
+                <div class="progress-steps">
+                    <div id="step-fetching" class="progress-step">
+                        <div class="step-icon">
+                            <svg class="icon-pending" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                                <circle cx="12" cy="12" r="10" stroke-width="2"/>
+                            </svg>
+                            <svg class="icon-loading" width="24" height="24" viewBox="0 0 24 24" style="display: none;">
+                                <circle cx="12" cy="12" r="10" stroke="#e5e7eb" stroke-width="3" fill="none"/>
+                                <path d="M12 2 A10 10 0 0 1 22 12" stroke="#007BFF" stroke-width="3" fill="none" stroke-linecap="round">
+                                    <animateTransform attributeName="transform" type="rotate" from="0 12 12" to="360 12 12" dur="1s" repeatCount="indefinite"/>
+                                </path>
+                            </svg>
+                            <svg class="icon-completed" width="24" height="24" viewBox="0 0 24 24" fill="none" style="display: none;">
+                                <circle cx="12" cy="12" r="10" fill="#16a34a" stroke="#16a34a" stroke-width="2"/>
+                                <path d="M7 12l3 3 7-7" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                            </svg>
+                        </div>
+                        <div class="step-content">
+                            <h3>Fetching Transactions</h3>
+                            <p>Scanning transaction folders and collecting files</p>
+                        </div>
+                    </div>
+
+                    <div id="step-reconciling" class="progress-step">
+                        <div class="step-icon">
+                            <svg class="icon-pending" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                                <circle cx="12" cy="12" r="10" stroke-width="2"/>
+                            </svg>
+                            <svg class="icon-loading" width="24" height="24" viewBox="0 0 24 24" style="display: none;">
+                                <circle cx="12" cy="12" r="10" stroke="#e5e7eb" stroke-width="3" fill="none"/>
+                                <path d="M12 2 A10 10 0 0 1 22 12" stroke="#007BFF" stroke-width="3" fill="none" stroke-linecap="round">
+                                    <animateTransform attributeName="transform" type="rotate" from="0 12 12" to="360 12 12" dur="1s" repeatCount="indefinite"/>
+                                </path>
+                            </svg>
+                            <svg class="icon-completed" width="24" height="24" viewBox="0 0 24 24" fill="none" style="display: none;">
+                                <circle cx="12" cy="12" r="10" fill="#16a34a" stroke="#16a34a" stroke-width="2"/>
+                                <path d="M7 12l3 3 7-7" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                            </svg>
+                        </div>
+                        <div class="step-content">
+                            <h3>Running Reconciliation</h3>
+                            <p id="reconciliation-details">Processing transaction files and calculating rates</p>
+                        </div>
+                    </div>
+
+                    <div id="step-finalizing" class="progress-step">
+                        <div class="step-icon">
+                            <svg class="icon-pending" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                                <circle cx="12" cy="12" r="10" stroke-width="2"/>
+                            </svg>
+                            <svg class="icon-loading" width="24" height="24" viewBox="0 0 24 24" style="display: none;">
+                                <circle cx="12" cy="12" r="10" stroke="#e5e7eb" stroke-width="3" fill="none"/>
+                                <path d="M12 2 A10 10 0 0 1 22 12" stroke="#007BFF" stroke-width="3" fill="none" stroke-linecap="round">
+                                    <animateTransform attributeName="transform" type="rotate" from="0 12 12" to="360 12 12" dur="1s" repeatCount="indefinite"/>
+                                </path>
+                            </svg>
+                            <svg class="icon-completed" width="24" height="24" viewBox="0 0 24 24" fill="none" style="display: none;">
+                                <circle cx="12" cy="12" r="10" fill="#16a34a" stroke="#16a34a" stroke-width="2"/>
+                                <path d="M7 12l3 3 7-7" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                            </svg>
+                        </div>
+                        <div class="step-content">
+                            <h3>Finalizing Report</h3>
+                            <p>Generating comprehensive PDF report</p>
+                        </div>
+                    </div>
+                </div>
+
+                <div id="progress-actions" class="progress-actions" style="display: none; text-align: center; margin-top: 30px;">
+                    <button onclick="viewResults()" class="btn-primary" style="padding: 12px 24px; font-size: 16px;">
+                        View Results
+                    </button>
+                </div>
+
+                <div id="progress-error" class="error-message" style="display: none; margin-top: 20px;">
+                </div>
+            </div>
+        </div>
+    </div>
+
+    {% if batch_results %}
+            <section class="rate-dashboard">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 30px; margin-bottom: 20px;">
+                    <h2 style="color: #1F4E78; margin: 0;">Batch Processing Results</h2>
+                    <button onclick="runNewBatch()" class="btn-primary" style="padding: 10px 20px; font-size: 14px;">
+                        🔄 Run New Batch Analysis
+                    </button>
+                </div>
+
+                <!-- Download PDF Button -->
+                <div class="results-actions" style="text-align: center; margin: 20px 0;">
+                    <a href="/download-batch-pdf" class="download-btn" style="display: inline-block; background: #DC3545; color: white; padding: 12px 24px; text-decoration: none; border-radius: 6px; font-weight: bold; font-size: 16px;">
+                        📄 Download PDF Report
+                    </a>
+                </div>
+
+                <!-- Summary Metrics -->
+                <div class="rate-metrics">
+                    <div class="metric-card">
+                        <span class="metric-label">Total Transactions</span>
+                        <span class="metric-value">{{ batch_results | length }}</span>
+                    </div>
+                    <div class="metric-card emphasis" style="background: #dcfce7;">
+                        <span class="metric-label">Successful</span>
+                        <span class="metric-value" style="color: #16a34a;">{{ batch_results | selectattr('status', 'equalto', 'success') | list | length }}</span>
+                    </div>
+                    <div class="metric-card" style="background: #fee2e2;">
+                        <span class="metric-label">Failed</span>
+                        <span class="metric-value" style="color: #dc2626;">{{ batch_results | selectattr('status', 'equalto', 'failed') | list | length }}</span>
+                    </div>
+                    <div class="metric-card" style="background: #fef3c7;">
+                        <span class="metric-label">Email Alerts Sent</span>
+                        <span class="metric-value" style="color: #f59e0b;">{{ batch_results | selectattr('email_sent', 'equalto', true) | list | length }}</span>
+                    </div>
+                </div>
+
+                <!-- Transaction List with Clickable Cards -->
+                <div class="rate-panel" style="margin-top: 30px;">
+                    <h3 style="margin-bottom: 20px;">📋 Transaction List - Click to View Details</h3>
+
+                    <div class="transaction-list-grid">
+                        {% for result in batch_results %}
+                        <a href="{{ url_for('batch_transaction_detail', transaction_name=result.transaction_name) }}"
+                           class="transaction-list-card {% if result.status == 'failed' %}failed{% elif result.email_sent %}alert{% else %}success{% endif %}"
+                           style="text-decoration: none; display: block;">
+                            <div class="transaction-card-header">
+                                <span class="transaction-icon">📊</span>
+                                <h4 class="transaction-title">{{ result.transaction_name }}</h4>
+                            </div>
+
+                            <div class="transaction-card-body">
+                                <div class="transaction-status">
+                                    <span class="status-badge {% if result.status == 'success' %}success{% else %}failed{% endif %}">
+                                        {{ result.status.upper() }}
+                                    </span>
+                                    {% if result.email_sent %}
+                                        <span class="alert-badge">⚠️ ALERT</span>
+                                    {% endif %}
+                                </div>
+
+                                {% if result.status == 'failed' %}
+                                    <p class="error-text">{{ result.error }}</p>
+                                {% else %}
+                                    {% if result.report and result.report.summary %}
+                                    <div class="transaction-metrics">
+                                        <div class="metric-row">
+                                            <span class="metric-label">Amount Reconciled:</span>
+                                            <span class="metric-value {% if result.email_sent %}critical{% endif %}">
+                                                {{ result.report.summary.amount_reconciled_display }}
+                                            </span>
+                                        </div>
+                                        <div class="metric-row">
+                                            <span class="metric-label">Fee Reconciled:</span>
+                                            <span class="metric-value">{{ result.report.summary.fee_reconciled_display }}</span>
+                                        </div>
+                                        <div class="metric-row">
+                                            <span class="metric-label">Items:</span>
+                                            <span class="metric-value">{{ result.report.summary.matched_items }}/{{ result.report.summary.total_visa_items }}</span>
+                                        </div>
+                                    </div>
+                                    {% endif %}
+                                {% endif %}
+                            </div>
+
+                            <div class="transaction-card-footer">
+                                <span class="view-details-link">View Full Details →</span>
+                            </div>
+                        </a>
+                        {% endfor %}
+                    </div>
+                </div>
+
+                <!-- Download PDF Button at Bottom -->
+                <div class="results-actions" style="text-align: center; margin-top: 30px; padding-top: 20px; border-top: 2px solid #e2e8f0;">
+                    <a href="/download-batch-pdf" class="download-btn" style="display: inline-block; background: #DC3545; color: white; padding: 12px 24px; text-decoration: none; border-radius: 6px; font-weight: bold; font-size: 16px; margin-right: 10px;">
+                        📄 Download PDF Report
+                    </a>
+                    <button onclick="runNewBatch()" class="btn-secondary" style="background: #007BFF; color: white; padding: 12px 24px; border: none; border-radius: 6px; cursor: pointer; font-weight: bold; font-size: 16px;">
+                        🔄 Run New Batch Analysis
+                    </button>
+                </div>
+            </section>
+        {% endif %}
+    </div>
+
+    <script>
+        function uploadZipFile() {
+            const fileInput = document.getElementById('transactions_zip');
+            const file = fileInput.files[0];
+
+            if (!file) {
+                alert('Please select a ZIP file to upload.');
+                return;
+            }
+
+            // Show loading indicator
+            const uploadBtn = event.target;
+            const originalText = uploadBtn.textContent;
+            uploadBtn.disabled = true;
+            uploadBtn.textContent = '⏳ Uploading...';
+
+            // Create FormData
+            const formData = new FormData();
+            formData.append('transactions_zip', file);
+
+            // Upload ZIP file
+            fetch('/upload-transactions', {
+                method: 'POST',
+                body: formData
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.error) {
+                    alert('Error: ' + data.error);
+                    uploadBtn.disabled = false;
+                    uploadBtn.textContent = originalText;
+                    return;
+                }
+
+                // Success - redirect to transaction browser
+                window.location.href = '/transaction-browser';
+            })
+            .catch(error => {
+                alert('Upload failed: ' + error.message);
+                uploadBtn.disabled = false;
+                uploadBtn.textContent = originalText;
+            });
+        }
+
+        function checkProgress() {
+            if (!currentJobId) return;
+
+            fetch(`/batch-progress/${currentJobId}`)
+                .then(response => response.json())
+                .then(data => {
+                    if (data.error) {
+                        showError(data.error);
+                        stopProgressPolling();
+                        return;
+                    }
+
+                    updateProgressUI(data);
+
+                    if (data.status === 'completed') {
+                        stopProgressPolling();
+                        showCompletedState();
+                    } else if (data.status === 'failed') {
+                        stopProgressPolling();
+                        showError(data.error || 'Batch processing failed');
+                    }
+                })
+                .catch(error => {
+                    console.error('Error checking progress:', error);
+                });
+        }
+
+        function updateProgressUI(data) {
+            const progress = data.progress;
+
+            // Update step states
+            if (progress === 'fetching' || progress === 'reconciling' || progress === 'finalizing') {
+                updateStepState('step-fetching', 'completed');
+            }
+
+            if (progress === 'reconciling' || progress === 'finalizing') {
+                updateStepState('step-reconciling', 'loading');
+
+                // Update reconciliation details
+                if (data.current_transaction) {
+                    document.getElementById('reconciliation-details').textContent =
+                        `Processing ${data.current_transaction} (${data.processed + 1}/${data.total_transactions})`;
+                }
+            }
+
+            if (progress === 'finalizing') {
+                updateStepState('step-reconciling', 'completed');
+                updateStepState('step-finalizing', 'loading');
+            }
+        }
+
+        function updateStepState(stepId, state) {
+            const step = document.getElementById(stepId);
+            const iconPending = step.querySelector('.icon-pending');
+            const iconLoading = step.querySelector('.icon-loading');
+            const iconCompleted = step.querySelector('.icon-completed');
+
+            // Hide all icons first
+            iconPending.style.display = 'none';
+            iconLoading.style.display = 'none';
+            iconCompleted.style.display = 'none';
+
+            // Show the appropriate icon
+            if (state === 'pending') {
+                iconPending.style.display = 'block';
+            } else if (state === 'loading') {
+                iconLoading.style.display = 'block';
+            } else if (state === 'completed') {
+                iconCompleted.style.display = 'block';
+            }
+        }
+
+        function showCompletedState() {
+            // Mark all steps as completed
+            updateStepState('step-fetching', 'completed');
+            updateStepState('step-reconciling', 'completed');
+            updateStepState('step-finalizing', 'completed');
+
+            // Save results to session and show view results button
+            fetch(`/save-batch-results/${currentJobId}`, { method: 'POST' })
+                .then(response => response.json())
+                .then(data => {
+                    // Show "View Results" button
+                    document.getElementById('progress-actions').style.display = 'block';
+                })
+                .catch(error => {
+                    console.error('Error saving results:', error);
+                    // Still show the button even if save fails
+                    document.getElementById('progress-actions').style.display = 'block';
+                });
+        }
+
+        function viewResults() {
+            // Redirect to the same page which will now show results
+            window.location.href = '/rates-file-automated';
+        }
+
+        function showError(message) {
+            const errorDiv = document.getElementById('progress-error');
+            errorDiv.textContent = 'Error: ' + message;
+            errorDiv.style.display = 'block';
+        }
+
+        function resetProgressSteps() {
+            updateStepState('step-fetching', 'pending');
+            updateStepState('step-reconciling', 'pending');
+            updateStepState('step-finalizing', 'pending');
+            document.getElementById('progress-actions').style.display = 'none';
+            document.getElementById('progress-error').style.display = 'none';
+            document.getElementById('reconciliation-details').textContent = 'Processing transaction files and calculating rates';
+        }
+
+        function stopProgressPolling() {
+            if (progressInterval) {
+                clearInterval(progressInterval);
+                progressInterval = null;
+            }
+        }
+
+        function runNewBatch() {
+            if (confirm('This will clear the current batch results. Are you sure you want to run a new batch analysis?')) {
+                // Clear session data
+                fetch('/clear-batch-results')
+                    .then(response => response.json())
+                    .then(data => {
+                        // Reload the page to show the form
+                        window.location.href = '/rates-file-automated';
+                    })
+                    .catch(error => {
+                        console.error('Error clearing batch results:', error);
+                        window.location.href = '/rates-file-automated';
+                    });
+            }
+        }
+    </script>
+</body>
+</html>

@@ -7,21 +7,28 @@ __pycache__/
 env/
 venv/
 ENV/
-env.bak/
-venv.bak/
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
 
-# Flask
-instance/
-.webassets-cache
+# Environment variables
+.env
+.env.local
+.env.production
 
-# Uploads and temporary files
-uploads/
-*.xlsx
-*.xls
-*.txt
-reconciliation_output.xlsx
-
-# IDE
+# IDEs
 .vscode/
 .idea/
 *.swp
@@ -32,9 +39,27 @@ reconciliation_output.xlsx
 .DS_Store
 Thumbs.db
 
-# Environment variables
-.env
-.env.local
+# Flask
+instance/
+.webassets-cache
+
+# Uploads and temporary files
+uploads/*
+!uploads/.gitkeep
+*.xlsx
+*.xls
+*.pdf
+*.zip
+temp_*/
+batch_*/
 
 # Logs
 *.log
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Documentation builds
+docs/_build/

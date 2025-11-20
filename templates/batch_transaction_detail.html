@@ -1,0 +1,199 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Transaction Detail - {{ transaction_name }}</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+    <div class="container">
+        <nav class="tab-nav">
+            <a class="tab-link" href="{{ url_for('index') }}">Reconciliation Files</a>
+            <a class="tab-link active" href="{{ url_for('rates_file') }}">Rates File</a>
+        </nav>
+
+        <!-- Sub-tabs -->
+        <div class="tab-nav" style="margin-top: 10px; border-top: 2px solid #e2e8f0; padding-top: 10px;">
+            <a class="tab-link" href="{{ url_for('rates_file') }}">Manual Upload</a>
+            <a class="tab-link active" href="{{ url_for('rates_file_automated') }}">Automated Batch</a>
+        </div>
+
+        <!-- Breadcrumb Navigation -->
+        <div style="margin: 20px 0; padding: 10px; background: #f1f5f9; border-radius: 6px;">
+            <a href="{{ url_for('rates_file_automated') }}" style="color: #007BFF; text-decoration: none; font-weight: 600;">← Back to Batch Results</a>
+            <span style="color: #6b7280; margin: 0 10px;">|</span>
+            <span style="color: #1f2937; font-weight: 600;">{{ transaction_name }}</span>
+        </div>
+
+        <h1>{{ transaction_name }} - Detailed Analysis</h1>
+
+        {% if email_sent %}
+        <div style="background: #fef3c7; border-left: 4px solid #f59e0b; padding: 15px; margin: 20px 0; border-radius: 4px;">
+            <strong style="color: #92400e;">⚠️ EMAIL ALERT SENT:</strong>
+            <span style="color: #92400e;">This transaction had Amount Reconciled below 95% threshold</span>
+        </div>
+        {% endif %}
+
+        <section class="rate-dashboard">
+            <div class="rate-metrics">
+                <div class="metric-card reconciled">
+                    <span class="metric-label">Amount Reconciled</span>
+                    <span class="metric-value-large">{{ report.summary.amount_reconciled_display }}</span>
+                    <div class="metric-subgrid">
+                        <div class="metric-sub">
+                            <span class="metric-sub-label">Fee Reconciled</span>
+                            <span class="metric-sub-value">{{ report.summary.fee_reconciled_display }}</span>
+                        </div>
+                        <div class="metric-sub">
+                            <span class="metric-sub-label">Item Reconciled</span>
+                            <span class="metric-sub-value">{{ report.summary.matched_items }}/{{ report.summary.total_visa_items }}</span>
+                        </div>
+                        <div class="metric-sub">
+                            <span class="metric-sub-label">Match %</span>
+                            <span class="metric-sub-value">{{ report.summary.amount_match_display }}</span>
+                        </div>
+                    </div>
+                </div>
+                <div class="metric-card">
+                    <span class="metric-label">Fee Mappings</span>
+                    <span class="metric-value">{{ report.summary.total_mappings }}</span>
+                </div>
+                <div class="metric-card emphasis">
+                    <span class="metric-label">Calculated Total</span>
+                    <span class="metric-value">{{ report.summary.total_final_amount_display }}</span>
+                </div>
+                <div class="metric-card">
+                    <span class="metric-label">VISA Total</span>
+                    <span class="metric-value">{{ report.summary.total_visa_amount_display }}</span>
+                </div>
+            </div>
+
+            {% if report.warnings %}
+            <div class="rate-panel warning">
+                <h2>Warnings</h2>
+                <ul>
+                    {% for warning in report.warnings %}
+                    <li>{{ warning }}</li>
+                    {% endfor %}
+                </ul>
+            </div>
+            {% endif %}
+
+            <div class="rate-panels">
+                {% if report.card %}
+                <div class="rate-panel">
+                    <h2>Card Issuance Snapshot</h2>
+                    <p class="stat">Total Cards: <strong>{{ report.card.total_cards }}</strong></p>
+                    {% if report.card.monthly_data %}
+                    <table class="data-table compact">
+                        <thead>
+                            <tr>
+                                <th>Period</th>
+                                <th>Cards</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for entry in report.card.monthly_data %}
+                            <tr>
+                                <td>{{ entry.period }}</td>
+                                <td>{{ entry.cards }}</td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                    {% else %}
+                    <p class="muted">No periodic breakdown detected.</p>
+                    {% endif %}
+                </div>
+                {% endif %}
+
+                {% if report.transactions %}
+                <div class="rate-panel">
+                    <h2>Transaction Overview</h2>
+                    <div class="transaction-grid">
+                        {% for item in report.transactions.entries %}
+                        <div class="transaction-card">
+                            <span class="transaction-label">{{ item.label }}</span>
+                            <span class="transaction-amount">{{ item.amount_display }}</span>
+                            <span class="transaction-volume">Volume: {{ item.volume }}</span>
+                        </div>
+                        {% endfor %}
+                    </div>
+                </div>
+                {% endif %}
+            </div>
+
+            {% if report.sheets %}
+            <div class="rate-panel">
+                <h2>Fee Details by Sheet</h2>
+                {% for sheet in report.sheets %}
+                <article class="sheet-block">
+                    <header class="sheet-header">
+                        <h3>{{ sheet.name }}</h3>
+                    </header>
+                    <div class="table-container">
+                        <table class="data-table">
+                            <thead>
+                                <tr>
+                                    <th>Fee Type</th>
+                                    <th>Rate Chart</th>
+                                    <th>Calculation Method</th>
+                                    <th>Calculated Amount</th>
+                                    <th>Exchange Rate</th>
+                                    <th>Calculated Value (INR)</th>
+                                    <th>VISA Amount (INR)</th>
+                                    <th>% Difference</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for row in sheet.rows %}
+                                <tr>
+                                    <td>{{ row.fee_type }}</td>
+                                    <td>{{ row.rate_chart }}</td>
+                                    <td>{{ row.calculation_method }}</td>
+                                    <td>{{ row.calculated_amount_display }}</td>
+                                    <td>{% if row.exchange_rate %}{{ row.exchange_rate }}{% else %}&mdash;{% endif %}</td>
+                                    <td class="{% if row.final_amount_display == 'Missing' %}text-warning{% endif %}">{{ row.final_amount_display }}</td>
+                                    <td>{{ row.visa_amount_display }}</td>
+                                    <td class="diff-{{ row.diff_status }}">{{ row.percentage_diff_display }}</td>
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                </article>
+                {% endfor %}
+            </div>
+            {% else %}
+                <div class="rate-panel">
+                    <p class="muted">No fee mappings were identified in the provided summary workbook.</p>
+                </div>
+            {% endif %}
+
+            {% if report.root_cause_analysis %}
+            <div class="rate-panel root-cause-panel">
+                <h2>🔍 Root Cause Analysis</h2>
+                <div class="root-cause-content">
+                    <div class="analysis-header">
+                        <span class="analysis-badge">AI-Powered Analysis</span>
+                        <span class="analysis-info">Generated by Mistral via Ollama</span>
+                    </div>
+                    <div class="analysis-text">
+                        {{ report.root_cause_analysis | safe }}
+                    </div>
+                </div>
+            </div>
+            {% endif %}
+
+            <!-- Action Buttons -->
+            <div class="results-actions" style="text-align: center; margin-top: 30px; padding-top: 20px; border-top: 2px solid #e2e8f0;">
+                <a href="{{ url_for('rates_file_automated') }}" class="btn-secondary" style="background: #6c757d; color: white; padding: 12px 24px; text-decoration: none; border-radius: 6px; font-weight: bold; font-size: 16px; display: inline-block; margin-right: 10px;">
+                    ← Back to Batch Results
+                </a>
+                <a href="/download-batch-pdf" class="download-btn" style="display: inline-block; background: #DC3545; color: white; padding: 12px 24px; text-decoration: none; border-radius: 6px; font-weight: bold; font-size: 16px;">
+                    📄 Download Full PDF Report
+                </a>
+            </div>
+        </section>
+    </div>
+</body>
+</html>

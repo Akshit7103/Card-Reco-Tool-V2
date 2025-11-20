@@ -1,0 +1,157 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Transaction Workspace</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+    <div class="container">
+        <nav class="tab-nav">
+            <a class="tab-link" href="{{ url_for('index') }}">Reconciliation Files</a>
+            <a class="tab-link active" href="{{ url_for('rates_file') }}">Rates File</a>
+        </nav>
+
+        <!-- Sub-tabs -->
+        <div class="tab-nav" style="margin-top: 10px; border-top: 2px solid #e2e8f0; padding-top: 10px;">
+            <a class="tab-link" href="{{ url_for('rates_file') }}">Manual Upload</a>
+            <a class="tab-link active" href="{{ url_for('rates_file_automated') }}">Automated Batch</a>
+        </div>
+
+        <h1>📊 Transaction Workspace</h1>
+
+        <!-- Workspace Info Bar -->
+        <div class="workspace-info-bar">
+            <div class="info-item">
+                <span class="info-label">Total Transactions:</span>
+                <span class="info-value">{{ transactions | length }}</span>
+            </div>
+            <div class="info-item">
+                <span class="info-label">Ready to Process:</span>
+                <span class="info-value">{{ transactions | selectattr('has_summary') | list | length }}</span>
+            </div>
+            <div class="info-item">
+                <span class="info-label">Session ID:</span>
+                <span class="info-value">{{ session_id[:8] }}...</span>
+            </div>
+        </div>
+
+        <!-- Action Buttons -->
+        <div class="workspace-actions">
+            <button onclick="clearWorkspace()" class="btn-danger">
+                🗑️ Clear Workspace & Start New
+            </button>
+        </div>
+
+        <!-- Transaction Cards Grid -->
+        <div class="transaction-grid-workspace">
+            {% for transaction in transactions %}
+            <div class="transaction-card-workspace {% if transaction.status == 'failed' %}failed{% elif transaction.status == 'completed' %}completed{% elif transaction.status == 'processing' %}processing{% endif %}"
+                 data-index="{{ loop.index0 }}">
+
+                <div class="card-header-workspace">
+                    <h3>{{ transaction.name }}</h3>
+                    <span class="status-badge status-{{ transaction.status }}">
+                        {{ transaction.status.upper() }}
+                    </span>
+                </div>
+
+                <div class="card-body-workspace">
+                    <!-- File Status List -->
+                    <div class="file-status-list">
+                        <div class="file-status-item {% if transaction.files.summary %}present{% else %}missing{% endif %}">
+                            <span class="file-icon">{% if transaction.files.summary %}✅{% else %}❌{% endif %}</span>
+                            <span class="file-label">Summary</span>
+                            {% if not transaction.has_summary %}<span class="required-badge">REQUIRED</span>{% endif %}
+                        </div>
+                        <div class="file-status-item {% if transaction.files.invoice %}present{% else %}missing{% endif %}">
+                            <span class="file-icon">{% if transaction.files.invoice %}✅{% else %}⚪{% endif %}</span>
+                            <span class="file-label">Invoice</span>
+                        </div>
+                        <div class="file-status-item {% if transaction.files.card %}present{% else %}missing{% endif %}">
+                            <span class="file-icon">{% if transaction.files.card %}✅{% else %}⚪{% endif %}</span>
+                            <span class="file-label">Card Issuance</span>
+                        </div>
+                        <div class="file-status-item {% if transaction.files.international %}present{% else %}missing{% endif %}">
+                            <span class="file-icon">{% if transaction.files.international %}✅{% else %}⚪{% endif %}</span>
+                            <span class="file-label">International</span>
+                        </div>
+                        <div class="file-status-item {% if transaction.files.domestic %}present{% else %}missing{% endif %}">
+                            <span class="file-icon">{% if transaction.files.domestic %}✅{% else %}⚪{% endif %}</span>
+                            <span class="file-label">Domestic</span>
+                        </div>
+                        <div class="file-status-item {% if transaction.files.dispute %}present{% else %}missing{% endif %}">
+                            <span class="file-icon">{% if transaction.files.dispute %}✅{% else %}⚪{% endif %}</span>
+                            <span class="file-label">VROL/Dispute</span>
+                        </div>
+                    </div>
+
+                    <div class="file-summary">
+                        📁 {{ transaction.file_count }} file(s) detected
+                    </div>
+
+                    <!-- Results Summary (if completed) -->
+                    {% if transaction.status == 'completed' and transaction.amount_reconciled %}
+                    <div class="results-preview">
+                        <div class="result-metric">
+                            <span class="metric-label">Amount Reconciled:</span>
+                            <span class="metric-value {% if transaction.email_sent %}critical{% endif %}">
+                                {{ transaction.amount_reconciled }}
+                            </span>
+                        </div>
+                        {% if transaction.email_sent %}
+                        <div class="alert-indicator">
+                            ⚠️ Email Alert Sent
+                        </div>
+                        {% endif %}
+                    </div>
+                    {% endif %}
+
+                    <!-- Error Message (if failed) -->
+                    {% if transaction.status == 'failed' %}
+                    <div class="error-preview">
+                        <strong>Error:</strong> {{ transaction.error }}
+                    </div>
+                    {% endif %}
+                </div>
+
+                <div class="card-actions-workspace">
+                    {% if transaction.status == 'completed' %}
+                        <button onclick="viewResult({{ loop.index0 }})" class="btn-view">
+                            👁️ View Detailed Results
+                        </button>
+                    {% elif transaction.status == 'processing' %}
+                        <button class="btn-processing" disabled>
+                            ⏳ Processing...
+                        </button>
+                    {% elif transaction.status == 'pending' and transaction.has_summary %}
+                        <button class="btn-processing" disabled>
+                            ⏳ Queued for Processing...
+                        </button>
+                    {% else %}
+                        <span class="warning-text">⚠️ Summary file missing - Skipped</span>
+                    {% endif %}
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+
+    <script>
+        // No auto-processing logic needed - processing page handles it
+
+        // processTransactions function removed - no longer needed
+        // All processing happens on the dedicated processing page
+
+        function viewResult(index) {
+            window.location.href = `/workspace-result/${index}`;
+        }
+
+        function clearWorkspace() {
+            if (confirm('This will delete all uploaded files and return to upload page. Continue?')) {
+                // Just redirect to automated page - it will clear everything automatically
+                window.location.href = '/rates-file-automated';
+            }
+        }
+    </script>
+</body>
+</html>

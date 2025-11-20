@@ -648,5 +648,17 @@ def run_rate_analysis(file_paths: Dict[str, Optional[str]]):
                 warnings.append("No invoice data found in uploaded files. Please check the invoice file format.")
 
     report_context = build_result_context(analysis_results, card_data, transaction_data, warnings, invoice_data)
+
+    # Generate root cause analysis if amount reconciled < 95%
+    try:
+        from root_cause_analysis import generate_root_cause_analysis
+        # Get OpenAI API key from environment
+        api_key = os.environ.get("OPENAI_API_KEY")
+        root_cause_analysis = generate_root_cause_analysis(report_context, api_key=api_key)
+        report_context['root_cause_analysis'] = root_cause_analysis
+    except Exception as e:
+        print(f"Error generating root cause analysis: {str(e)}")
+        report_context['root_cause_analysis'] = None
+
     return report_context
 
