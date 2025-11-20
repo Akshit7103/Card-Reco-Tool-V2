@@ -11,6 +11,7 @@ import smtplib
 import threading
 import uuid
 import zipfile
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from flask import Flask, render_template, request, send_file, jsonify, session, redirect, url_for
@@ -25,6 +26,7 @@ from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, 
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.units import inch
 from reportlab.lib.enums import TA_CENTER, TA_LEFT
+import json
 
 app = Flask(__name__)
 app.config["UPLOAD_FOLDER"] = "uploads"
@@ -50,34 +52,50 @@ last_rate_report = None
 # Batch job tracking
 batch_jobs = {}  # {job_id: {status, progress, results, error}}
 
-# Email configuration from mailjet_test.py
-SMTP_HOST = "smtp.mailjet.com"
-SMTP_PORT = 587
-SMTP_USER = "770477fa4a7c9c7c8aac64807c3c69ce"
-SMTP_PASS = "81a49ef6dc5e97dbe4cd67fc95a74fa7"
-EMAIL_SENDER = "akshit.mahajan713@gmail.com"
-EMAIL_RECIPIENT = "akshit.mahajan0703@gmail.com"
+# Processing state for async background jobs
+processing_state = {}  # {session_id: {status, current_index, total, transactions}}
+processing_lock = threading.Lock()  # Thread-safe access to processing_state
 
-def send_reconciliation_alert(report):
+# Email configuration - with environment variable override
+SMTP_HOST = os.environ.get("SMTP_HOST", "smtp.mailjet.com")
+SMTP_PORT = int(os.environ.get("SMTP_PORT", 587))
+SMTP_USER = os.environ.get("SMTP_USER", "770477fa4a7c9c7c8aac64807c3c69ce")
+SMTP_PASS = os.environ.get("SMTP_PASS", "81a49ef6dc5e97dbe4cd67fc95a74fa7")
+EMAIL_SENDER = os.environ.get("EMAIL_SENDER", "akshit.mahajan713@gmail.com")
+EMAIL_RECIPIENT = os.environ.get("EMAIL_RECIPIENT", "akshit.mahajan0703@gmail.com")
+EMAIL_ENABLED = os.environ.get("EMAIL_ENABLED", "true").lower() == "true"
+
+def send_reconciliation_alert(report, transaction_name=""):
     """
     Send email alert when Amount Reconciled falls below 95%
 
     Args:
         report: Report context with reconciliation metrics
+        transaction_name: Name of the transaction (optional)
+
+    Returns:
+        bool: True if email sent successfully, False otherwise
     """
     try:
+        # Check if email is enabled
+        if not EMAIL_ENABLED:
+            print("📧 Email alerts disabled - skipping")
+            return False
+
         amount_reconciled = report["summary"]["amount_reconciled_percentage"]
 
         # Only send email if amount reconciled is below 95%
         if amount_reconciled >= 95:
-            return
+            print(f"✅ Amount reconciled {amount_reconciled:.2f}% >= 95% - no alert needed")
+            return False
 
         # Prepare email content
-        subject = f"⚠️ Reconciliation Alert: Amount Reconciled at {amount_reconciled:.2f}%"
+        transaction_info = f" - {transaction_name}" if transaction_name else ""
+        subject = f"⚠️ Reconciliation Alert{transaction_info}: {amount_reconciled:.2f}%"
 
         # Create detailed email body
         body = f"""
-Reconciliation Alert - Low Match Percentage Detected
+Reconciliation Alert - Low Match Percentage Detected{transaction_info}
 
 CRITICAL METRICS:
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -111,17 +129,24 @@ This is an automated alert from the Card Reconciliation Tool.
         msg["To"] = EMAIL_RECIPIENT
         msg.attach(MIMEText(body, "plain"))
 
-        # Send email
-        with smtplib.SMTP(SMTP_HOST, SMTP_PORT) as server:
+        # Send email with timeout
+        with smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=30) as server:
             server.starttls()
             server.login(SMTP_USER, SMTP_PASS)
             server.send_message(msg)
 
         print(f"✅ Alert email sent successfully! Amount Reconciled: {amount_reconciled:.2f}%")
+        return True
 
+    except smtplib.SMTPAuthenticationError as e:
+        print(f"❌ Email authentication failed: {str(e)}")
+        return False
+    except smtplib.SMTPException as e:
+        print(f"❌ SMTP error sending email: {str(e)}")
+        return False
     except Exception as e:
         print(f"❌ Error sending email alert: {str(e)}")
-        # Don't raise exception to avoid breaking the main flow
+        return False
 
 def scan_transaction_folders(base_path):
     """
@@ -832,65 +857,132 @@ def processing_page():
 
     return render_template('processing_page.html', total_count=total_count)
 
+def process_single_transaction(idx, transaction, temp_dir):
+    """
+    Worker function to process a single transaction
+
+    Args:
+        idx: Transaction index
+        transaction: Transaction dictionary
+        temp_dir: Temporary directory for storing reports
+
+    Returns:
+        dict: Processing result with index, status, and metadata
+    """
+    try:
+        # Update processing state
+        with processing_lock:
+            transaction['status'] = 'processing'
+
+        # Run rate analysis
+        file_paths = transaction['files']
+        report = run_rate_analysis(file_paths)
+
+        # Check email alert
+        email_sent = False
+        if report and report.get("summary"):
+            amount_reconciled = report["summary"]["amount_reconciled_percentage"]
+            if amount_reconciled < 95:
+                email_sent = send_reconciliation_alert(report, transaction_name=transaction.get('name', ''))
+
+        # Save report to file
+        report_filename = f"report_{idx}.json"
+        report_path = os.path.join(temp_dir, report_filename)
+        with open(report_path, 'w') as f:
+            json.dump(report, f)
+
+        # Update transaction status
+        with processing_lock:
+            transaction['status'] = 'completed'
+            transaction['report_file'] = report_filename
+            transaction['email_sent'] = email_sent
+            transaction['amount_reconciled'] = report['summary']['amount_reconciled_display']
+
+        return {
+            'index': idx,
+            'status': 'success',
+            'email_sent': email_sent,
+            'transaction_name': transaction.get('name', '')
+        }
+
+    except Exception as e:
+        with processing_lock:
+            transaction['status'] = 'failed'
+            transaction['error'] = str(e)
+
+        return {
+            'index': idx,
+            'status': 'failed',
+            'error': str(e),
+            'transaction_name': transaction.get('name', '')
+        }
+
 @app.route("/execute-batch-processing", methods=["POST"])
 def execute_batch_processing():
-    """Execute batch processing and return results"""
+    """Execute batch processing with parallel processing for faster execution"""
     try:
         transactions = session.get('transactions', [])
         temp_dir = session.get('temp_dir')
 
         # Find all pending transactions
-        indices = []
+        pending_tasks = []
         for idx, txn in enumerate(transactions):
             if txn.get('status') == 'pending' and txn.get('has_summary'):
-                indices.append(idx)
+                pending_tasks.append((idx, txn))
 
-        # Process each transaction
-        for idx in indices:
-            transaction = transactions[idx]
-            session['processing_index'] = idx
-            session['processing_transaction'] = transaction['name']
-            session.modified = True
+        if not pending_tasks:
+            return jsonify({'status': 'completed', 'message': 'No pending transactions to process'})
 
-            transaction['status'] = 'processing'
+        # Initialize processing state
+        session_id = session.get('session_id', str(uuid.uuid4()))
+        with processing_lock:
+            processing_state[session_id] = {
+                'status': 'processing',
+                'current_index': 0,
+                'total': len(pending_tasks),
+                'completed': 0
+            }
 
-            try:
-                file_paths = transaction['files']
-                report = run_rate_analysis(file_paths)
+        # Process transactions in parallel (max 2 workers for free tier memory constraints)
+        max_workers = min(2, len(pending_tasks))
+        results = []
 
-                email_sent = False
-                if report and report.get("summary"):
-                    amount_reconciled = report["summary"]["amount_reconciled_percentage"]
-                    if amount_reconciled < 95:
-                        send_reconciliation_alert(report)
-                        email_sent = True
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            # Submit all tasks
+            future_to_idx = {
+                executor.submit(process_single_transaction, idx, txn, temp_dir): idx
+                for idx, txn in pending_tasks
+            }
 
-                # Save report to file
-                import json
-                report_filename = f"report_{idx}.json"
-                report_path = os.path.join(temp_dir, report_filename)
-                with open(report_path, 'w') as f:
-                    json.dump(report, f)
+            # Process results as they complete
+            for future in as_completed(future_to_idx):
+                result = future.result()
+                results.append(result)
 
-                transaction['status'] = 'completed'
-                transaction['report_file'] = report_filename
-                transaction['email_sent'] = email_sent
-                transaction['amount_reconciled'] = report['summary']['amount_reconciled_display']
+                # Update processing state
+                with processing_lock:
+                    if session_id in processing_state:
+                        processing_state[session_id]['completed'] += 1
+                        processing_state[session_id]['current_index'] = result['index']
 
-            except Exception as e:
-                transaction['status'] = 'failed'
-                transaction['error'] = str(e)
+        # Clear processing state
+        with processing_lock:
+            if session_id in processing_state:
+                processing_state[session_id]['status'] = 'completed'
 
-        # Clear processing flags
+        # Update session
         session['transactions'] = transactions
         session.pop('auto_process_pending', None)
-        session.pop('processing_index', None)
-        session.pop('processing_transaction', None)
         session.modified = True
 
-        return jsonify({'status': 'completed', 'message': 'All transactions processed'})
+        return jsonify({
+            'status': 'completed',
+            'message': f'Processed {len(results)} transactions',
+            'results': results
+        })
 
     except Exception as e:
+        print(f"❌ Batch processing error: {str(e)}")
         return jsonify({'status': 'failed', 'error': str(e)}), 500
 
 @app.route("/batch-processing-status")
@@ -904,69 +996,41 @@ def batch_processing_status():
 
 @app.route("/process-workspace-transactions", methods=["POST"])
 def process_workspace_transactions():
-    """Process selected transactions from workspace"""
+    """Process selected transactions from workspace with parallel processing"""
     try:
         data = request.get_json()
         indices = data.get('transaction_indices', [])
 
         transactions = session.get('transactions', [])
         temp_dir = session.get('temp_dir')
+
+        # Prepare tasks for parallel processing
+        tasks = []
+        for idx in indices:
+            if idx < len(transactions):
+                tasks.append((idx, transactions[idx]))
+
+        if not tasks:
+            return jsonify({'results': []})
+
+        # Process transactions in parallel (max 2 workers for free tier)
+        max_workers = min(2, len(tasks))
         results = []
 
-        for idx in indices:
-            if idx >= len(transactions):
-                continue
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            # Submit all tasks
+            future_to_idx = {
+                executor.submit(process_single_transaction, idx, txn, temp_dir): idx
+                for idx, txn in tasks
+            }
 
-            transaction = transactions[idx]
-
-            # Mark as processing
-            transaction['status'] = 'processing'
-
-            try:
-                # Run rate analysis
-                file_paths = transaction['files']
-                report = run_rate_analysis(file_paths)
-
-                # Check email alert
-                email_sent = False
-                if report and report.get("summary"):
-                    amount_reconciled = report["summary"]["amount_reconciled_percentage"]
-                    if amount_reconciled < 95:
-                        send_reconciliation_alert(report)
-                        email_sent = True
-
-                # Save report to file instead of session (to avoid cookie size limit)
-                import json
-                report_filename = f"report_{idx}.json"
-                report_path = os.path.join(temp_dir, report_filename)
-                with open(report_path, 'w') as f:
-                    json.dump(report, f)
-
-                # Update transaction - store only metadata, not full report
-                transaction['status'] = 'completed'
-                transaction['report_file'] = report_filename
-                transaction['email_sent'] = email_sent
-                transaction['amount_reconciled'] = report['summary']['amount_reconciled_display']
-
-                results.append({
-                    'index': idx,
-                    'status': 'success',
-                    'email_sent': email_sent
-                })
-
-            except Exception as e:
-                transaction['status'] = 'failed'
-                transaction['error'] = str(e)
-
-                results.append({
-                    'index': idx,
-                    'status': 'failed',
-                    'error': str(e)
-                })
+            # Collect results as they complete
+            for future in as_completed(future_to_idx):
+                result = future.result()
+                results.append(result)
 
         # Update session
         session['transactions'] = transactions
-        # Clear auto-process flag after processing completes
         session.pop('auto_process_pending', None)
         session.modified = True
 
