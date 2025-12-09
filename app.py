@@ -58,7 +58,7 @@ processing_lock = threading.Lock()  # Thread-safe access to processing_state
 MAILJET_API_KEY = os.environ.get("MAILJET_API_KEY", "770477fa4a7c9c7c8aac64807c3c69ce")
 MAILJET_API_SECRET = os.environ.get("MAILJET_API_SECRET", "81a49ef6dc5e97dbe4cd67fc95a74fa7")
 EMAIL_SENDER = os.environ.get("EMAIL_SENDER", "akshit.mahajan713@gmail.com")
-EMAIL_RECIPIENT = os.environ.get("EMAIL_RECIPIENT", "akshit.mahajan0703@gmail.com")
+EMAIL_RECIPIENT = os.environ.get("EMAIL_RECIPIENT", "dheeraj.khatri@live.com")
 EMAIL_ENABLED = os.environ.get("EMAIL_ENABLED", "true").lower() == "true"
 
 # Initialize Mailjet client
